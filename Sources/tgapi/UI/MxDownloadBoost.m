@@ -25,6 +25,42 @@
 @interface MxDownloadBoost : NSObject
 + (void)install;
 @end
+static void mxProbeDownloadClasses(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        int count = objc_getClassList(NULL, 0);
+        if (count <= 0) return;
+        Class *classes = (__unsafe_unretained Class *)malloc(sizeof(Class) * count);
+        count = objc_getClassList(classes, count);
+        int logged = 0;
+        for (int i = 0; i < count && logged < 120; i++) {
+            const char *name = class_getName(classes[i]);
+            if (!name) continue;
+            BOOL interesting =
+                strstr(name, "FetchManager") || strstr(name, "FetchImpl") ||
+                strstr(name, "FetchingState") || strstr(name, "FetchedMediaResource") ||
+                strstr(name, "DownloadedMedia") || strstr(name, "Download") ||
+                strstr(name, "Turrit");
+            if (!interesting) continue;
+            logged++;
+            Class cls = classes[i];
+            Class sup = class_getSuperclass(cls);
+            customLog2(@"[Mx][probe] class %s super=%s", name,
+                       sup ? class_getName(sup) : "nil");
+            unsigned int methodCount = 0;
+            Method *methods = class_copyMethodList(cls, &methodCount);
+            for (unsigned int j = 0; j < methodCount && j < 20; j++) {
+                customLog2(@"[Mx][probe]    - %s (args=%u)",
+                           sel_getName(method_getName(methods[j])),
+                           method_getNumberOfArguments(methods[j]));
+            }
+            if (methods) free(methods);
+            customLog2(@"[Mx][probe]    methods=%u", methodCount);
+        }
+        free(classes);
+        customLog2(@"[Mx][probe] done, logged %d classes", logged);
+    });
+}
 
 typedef id (*FetchingStateInitIMP)(id, SEL, id, long long, long long, long long, long long, long long, int, id);
 static FetchingStateInitIMP originalFetchingStateInit = NULL;
@@ -55,6 +91,8 @@ static id boostedFetchingStateInit(id self, SEL _cmd,
 @implementation MxDownloadBoost
 
 + (void)install {
+    mxProbeDownloadClasses();
+
     // Scan all ObjC classes for FetchingState (private nested class in TelegramCore)
     int classCount = objc_getClassList(NULL, 0);
     if (classCount <= 0) return;
